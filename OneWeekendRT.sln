@@ -1,0 +1,17 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OneWeekendRT", "OneWeekendRT\OneWeekendRT.csproj", "{D5ECDD37-C93B-477F-86C7-EE96E828414C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|anycpu = Debug|anycpu
+		Release|anycpu = Release|anycpu
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D5ECDD37-C93B-477F-86C7-EE96E828414C}.Debug|anycpu.ActiveCfg = Debug|anycpu
+		{D5ECDD37-C93B-477F-86C7-EE96E828414C}.Debug|anycpu.Build.0 = Debug|anycpu
+		{D5ECDD37-C93B-477F-86C7-EE96E828414C}.Release|anycpu.ActiveCfg = Release|anycpu
+		{D5ECDD37-C93B-477F-86C7-EE96E828414C}.Release|anycpu.Build.0 = Release|anycpu
+	EndGlobalSection
+EndGlobal
