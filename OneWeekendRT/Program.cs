@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Collections.Generic;
 
 
 namespace OneWeekendRT
@@ -121,6 +122,22 @@ namespace OneWeekendRT
         public double x, y, z;
 
         public static Vec3 Zero = new Vec3(0.0, 0.0, 0.0);
+
+        public static Vec3 random()
+        {
+            var rand = new System.Random();
+            return new Vec3(rand.NextDouble(), rand.NextDouble(), rand.NextDouble());
+        }
+
+        public static Vec3 random(double min, double max)
+        {
+            var L = max - min;
+            var rand = new System.Random();
+            var x = rand.NextDouble() * L + min;
+            var y = rand.NextDouble() * L + min;
+            var z = rand.NextDouble() * L + min;
+            return new Vec3(x, y, z);
+        }
     }
 
 
@@ -162,6 +179,13 @@ namespace OneWeekendRT
         public Point3 p;
         public Vec3 normal;
         public double t;
+        public bool isFrontFace;
+
+        public void determine_face_normal(Ray ray, Vec3 outward_normal)
+        {
+            isFrontFace = Vec3.dot(ray.Direction, outward_normal) < 0;
+            normal = isFrontFace ? outward_normal : -outward_normal;
+        }
     }
 
     interface IHittable
@@ -194,6 +218,9 @@ namespace OneWeekendRT
                     rec.t = temp;
                     rec.p = r.At(rec.t);
                     rec.normal = (rec.p - center) / radius;
+                    rec.isFrontFace = false;
+                    var outward_normal = (rec.p - center) / radius;
+                    rec.determine_face_normal(r, outward_normal);
                     return true;
                 }
                 temp = (-half_b + root) / a;
@@ -202,6 +229,9 @@ namespace OneWeekendRT
                     rec.t = temp;
                     rec.p = r.At(rec.t);
                     rec.normal = (rec.p - center) / radius;
+                    rec.isFrontFace = false;
+                    var outward_normal = (rec.p - center) / radius;
+                    rec.determine_face_normal(r, outward_normal);
                     return true;
                 }
             }
@@ -210,6 +240,7 @@ namespace OneWeekendRT
             rec.normal = Vec3.Zero;
             rec.p = Vec3.Zero;
             rec.t = 0.0;
+            rec.isFrontFace = false;
             return false;
         }
 
@@ -217,10 +248,53 @@ namespace OneWeekendRT
         public double radius;
     }
 
-
-    class RayTracer
+    class HittableList : IHittable
     {
-        public RayTracer(int w, int h, double focalL)
+        public List<IHittable> objects = new List<IHittable>();
+
+        public HittableList() { }
+
+        public HittableList(IHittable obj)
+        {
+            Add(obj);
+        }
+
+        public void Clear()
+        {
+            objects.Clear();
+        }
+
+        public void Add(IHittable obj)
+        {
+            objects.Add(obj);
+        }
+
+        public bool Hit(Ray r, double t_min, double t_max, out HitRecord rec)
+        {
+            HitRecord tempHit = new HitRecord();
+            rec = tempHit;
+            bool hitAnything = false;
+            double closestSoFar = t_max;
+
+            foreach(var obj in objects)
+            {
+                if(obj.Hit(r, t_min, closestSoFar, out tempHit))
+                {
+                    hitAnything = true;
+                    closestSoFar = tempHit.t;
+                    rec = tempHit;
+                }
+            }
+
+            return hitAnything;
+        }
+    }
+
+
+    class Camera
+    {
+
+        public Camera(int w, int h, double focalL)
         {
             outputImageHeight = h;
             outputImageWidth = w;
@@ -292,16 +366,51 @@ namespace OneWeekendRT
             }
         }
 
-        public color ComputeRayColor(Ray ray)
+        public Ray GetRay(double u, double v)
         {
-            var sphereCenter = new Point3(0, 0, -1);
-            var sphere = new Sphere(sphereCenter, 0.5);
-            var hitRec = new HitRecord();
-            var hit = sphere.Hit(ray, 0.0, 1.0, out hitRec);
-            if (hit)
+            return new Ray(Origin, LowerLeftCorner + u * HorizontalStepVec + v * VerticalStepVec - Origin);
+        }
+    }
+
+
+    class RayTracer
+    {
+        public RayTracer(int w, int h, double focalL)
+        {
+            camera = new Camera(w, h, focalL);
+        }
+
+        Camera camera;
+        public Camera Camera
+        {
+            get { return camera; }
+        }
+
+        public double RandomDouble
+        {
+            get
             {
-                var N = (ray.At(hitRec.t) - sphereCenter).unit_vector();
-                return 0.5 * (new color(N.X() + 1, N.Y() + 1, N.Z() + 1));
+                Random rand = new Random();
+                return rand.NextDouble();
+            }
+        }
+
+        public int SamplePerPixel
+        {
+            get { return 100; }
+        }
+
+        public color ComputeRayColor(Ray ray, IHittable world, int recursiveDepth)
+        {
+            if (recursiveDepth <= 0)
+                return color.Zero;
+
+            var hitRec = new HitRecord();
+            // use t_min=0.001 to fix the shadow acne
+            if(world.Hit(ray, 0.001, float.PositiveInfinity, out hitRec))
+            {
+                var target = hitRec.p + RandomInHemiSphere(hitRec.normal);
+                return 0.5 * ComputeRayColor(new Ray(hitRec.p, target - hitRec.p), world, recursiveDepth - 1);
             }
 
             var unit_dir = ray.Direction.unit_vector();
@@ -310,6 +419,46 @@ namespace OneWeekendRT
             color start = new color(0.5, 0.7, 1.0);
             return (1.0 - t) * end + t * start;
         }
+
+        public void WriteOutputColorAt(int x, int y, color pixelColor, Bitmap bmp)
+        {
+            var r = pixelColor.R();
+            var g = pixelColor.G();
+            var b = pixelColor.B();
+            // Divide the color total by the number of samples and gamma-correct for gamma=2.0.
+            var scale = 1.0 / SamplePerPixel;
+
+            r = Math.Sqrt(scale * r);
+            g = Math.Sqrt(scale * g);
+            b = Math.Sqrt(scale * b);
+
+            color newColor = new color(r, g, b);
+
+            bmp.SetPixel(x, Camera.OutputImageHeight - y - 1, newColor.ToCLRColor());
+        }
+
+        public static Vec3 RandomInUnitSphere()
+        {
+            Random rand = new Random();
+            var a = rand.NextDouble() * Math.PI * 2;
+            var z = (rand.NextDouble() - 0.5) * 2;
+            var r = Math.Sqrt(1 - z * z);
+            return new Vec3(r * Math.Cos(a), r * Math.Sin(a), z);
+        }
+
+        public static Vec3 RandomInHemiSphere(Vec3 normal)
+        {
+            var in_unit_sphere = RandomInUnitSphere();
+            if (Vec3.dot(in_unit_sphere, normal) > 0)
+                return in_unit_sphere;
+            else
+                return -in_unit_sphere;
+        }
+
+        public int MaxRecursiveDepth
+        {
+            get { return 50; }
+        }
     }
 
     class MainClass
@@ -317,19 +466,28 @@ namespace OneWeekendRT
         public static void Main(string[] args)
         {
             RayTracer rt = new RayTracer(800, 600, 1.0);
-            var bmp = new Bitmap(rt.OutputImageWidth, rt.OutputImageHeight);
-            for (int y = 0; y < rt.OutputImageHeight; ++y)
+            var bmp = new Bitmap(rt.Camera.OutputImageWidth, rt.Camera.OutputImageHeight);
+            HittableList world = new HittableList();
+            world.Add(new Sphere(new Point3(0, 0, -1), 0.5));
+            world.Add(new Sphere(new Point3(0, -100.5, -1), 100));
+
+            for (int y = 0; y < rt.Camera.OutputImageHeight; ++y)
             {
-                for (int x = 0; x < rt.OutputImageWidth; ++x)
+                Console.WriteLine("Line: " + y.ToString() + "...");
+                for (int x = 0; x < rt.Camera.OutputImageWidth; ++x)
                 {
-                    var u = (double)x / (rt.OutputImageWidth - 1);
-                    var v = (double)y / (rt.OutputImageHeight - 1);
-                    Ray ray = new Ray(rt.Origin,
-                        rt.LowerLeftCorner + u * rt.HorizontalStepVec + v * rt.VerticalStepVec - rt.Origin);
-                    var pixelColor = rt.ComputeRayColor(ray);
-                    bmp.SetPixel(x, rt.OutputImageHeight - y - 1, pixelColor.ToCLRColor());
+                    color pixelColor = color.Zero;
+                    for (int s = 0; s < rt.SamplePerPixel; ++s)
+                    {
+                        var u = (double)(x + rt.RandomDouble) / (rt.Camera.OutputImageWidth - 1);
+                        var v = (double)(y + rt.RandomDouble) / (rt.Camera.OutputImageHeight - 1);
+                        Ray ray = rt.Camera.GetRay(u, v);
+                        pixelColor += rt.ComputeRayColor(ray, world, rt.MaxRecursiveDepth);
+                    }
+                    rt.WriteOutputColorAt(x, y, pixelColor, bmp);
                 }
             }
+            Console.WriteLine("Save out final image.");
             bmp.Save("/Users/jhq/Desktop/RT.bmp");
         }
     }
