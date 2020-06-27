@@ -180,6 +180,7 @@ namespace OneWeekendRT
         public Vec3 normal;
         public double t;
         public bool isFrontFace;
+        public IMaterial material;
 
         public void determine_face_normal(Ray ray, Vec3 outward_normal)
         {
@@ -195,10 +196,11 @@ namespace OneWeekendRT
 
     class Sphere : IHittable
     {
-        public Sphere(Point3 c, double r)
+        public Sphere(Point3 c, double r, IMaterial mat)
         {
             center = c;
             radius = r;
+            material = mat;
         }
 
         public bool Hit(Ray r, double t_min, double t_max, out HitRecord rec)
@@ -219,6 +221,7 @@ namespace OneWeekendRT
                     rec.p = r.At(rec.t);
                     rec.normal = (rec.p - center) / radius;
                     rec.isFrontFace = false;
+                    rec.material = material;
                     var outward_normal = (rec.p - center) / radius;
                     rec.determine_face_normal(r, outward_normal);
                     return true;
@@ -230,6 +233,7 @@ namespace OneWeekendRT
                     rec.p = r.At(rec.t);
                     rec.normal = (rec.p - center) / radius;
                     rec.isFrontFace = false;
+                    rec.material = material;
                     var outward_normal = (rec.p - center) / radius;
                     rec.determine_face_normal(r, outward_normal);
                     return true;
@@ -241,11 +245,13 @@ namespace OneWeekendRT
             rec.p = Vec3.Zero;
             rec.t = 0.0;
             rec.isFrontFace = false;
+            rec.material = material;
             return false;
         }
 
         public Point3 center;
         public double radius;
+        IMaterial material;
     }
 
     class HittableList : IHittable
@@ -287,6 +293,49 @@ namespace OneWeekendRT
             }
 
             return hitAnything;
+        }
+    }
+
+    interface IMaterial
+    {
+        bool Scatter(Ray rayIn, ref HitRecord rec, out color attenuation, out Ray scattered);
+    }
+
+    class Lambertian : IMaterial
+    {
+        public color albedo;
+
+        public Lambertian(color a)
+        {
+            albedo = a;
+        }
+
+        public bool Scatter(Ray rayIn, ref HitRecord rec, out color attenuation, out Ray scattered)
+        {
+            var scatter_direction = rec.normal + RayTracer.RandomInUnitSphere();
+            scattered = new Ray(rec.p, scatter_direction);
+            attenuation = albedo;
+            return true;
+        }
+    }
+
+    class Metal : IMaterial
+    {
+        public Metal(color a, double r)
+        {
+            albedo = a;
+            roughness = r < 1 ? r : 1;
+        }
+
+        public color albedo;
+        public double roughness;
+
+        public bool Scatter(Ray rayIn, ref HitRecord rec, out color attenuation, out Ray scattered)
+        {
+            Vec3 reflect = RayTracer.Reflect(rayIn.Direction.unit_vector(), rec.normal);
+            scattered = new Ray(rec.p, reflect + roughness * RayTracer.RandomInUnitSphere());
+            attenuation = albedo;
+            return Vec3.dot(scattered.Direction, rec.normal) > 0;
         }
     }
 
@@ -409,8 +458,13 @@ namespace OneWeekendRT
             // use t_min=0.001 to fix the shadow acne
             if(world.Hit(ray, 0.001, float.PositiveInfinity, out hitRec))
             {
-                var target = hitRec.p + RandomInHemiSphere(hitRec.normal);
-                return 0.5 * ComputeRayColor(new Ray(hitRec.p, target - hitRec.p), world, recursiveDepth - 1);
+                Ray scattered = new Ray();
+                color attenuation = color.Zero;
+                if(hitRec.material.Scatter(ray, ref hitRec, out attenuation, out scattered))
+                {
+                    return attenuation * ComputeRayColor(scattered, world, recursiveDepth - 1);
+                }
+                return color.Zero;
             }
 
             var unit_dir = ray.Direction.unit_vector();
@@ -455,7 +509,12 @@ namespace OneWeekendRT
                 return -in_unit_sphere;
         }
 
-        public int MaxRecursiveDepth
+        public static Vec3 Reflect(Vec3 v, Vec3 n)
+        {
+            return v - 2 * Vec3.dot(v, n) * n;
+        }
+
+        public static int MaxRecursiveDepth
         {
             get { return 50; }
         }
@@ -468,8 +527,10 @@ namespace OneWeekendRT
             RayTracer rt = new RayTracer(800, 600, 1.0);
             var bmp = new Bitmap(rt.Camera.OutputImageWidth, rt.Camera.OutputImageHeight);
             HittableList world = new HittableList();
-            world.Add(new Sphere(new Point3(0, 0, -1), 0.5));
-            world.Add(new Sphere(new Point3(0, -100.5, -1), 100));
+            world.Add(new Sphere(new Point3(0, 0, -1), 0.5, new Lambertian(new color(0.7, 0.3, 0.3))));
+            world.Add(new Sphere(new Point3(0, -100.5, -1), 100, new Lambertian(new color(0.8, 0.8, 0))));
+            world.Add(new Sphere(new Point3(1, 0, -1), 0.5, new Metal(new color(0.8, 0.6, 0.2), 0)));
+            world.Add(new Sphere(new Point3(-1, 0, -1), 0.5, new Metal(new color(0.8, 0.8, 0.8), 0.6)));
 
             for (int y = 0; y < rt.Camera.OutputImageHeight; ++y)
             {
@@ -482,7 +543,7 @@ namespace OneWeekendRT
                         var u = (double)(x + rt.RandomDouble) / (rt.Camera.OutputImageWidth - 1);
                         var v = (double)(y + rt.RandomDouble) / (rt.Camera.OutputImageHeight - 1);
                         Ray ray = rt.Camera.GetRay(u, v);
-                        pixelColor += rt.ComputeRayColor(ray, world, rt.MaxRecursiveDepth);
+                        pixelColor += rt.ComputeRayColor(ray, world, RayTracer.MaxRecursiveDepth);
                     }
                     rt.WriteOutputColorAt(x, y, pixelColor, bmp);
                 }
