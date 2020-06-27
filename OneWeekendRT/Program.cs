@@ -339,6 +339,51 @@ namespace OneWeekendRT
         }
     }
 
+    class Dielectric : IMaterial
+    {
+        public double ref_idx;
+
+        public Dielectric(double ri)
+        {
+            ref_idx = ri;
+        }
+
+        public bool Scatter(Ray rayIn, ref HitRecord rec, out color attenuation, out Ray scattered)
+        {
+            attenuation = new color(1.0, 1.0, 1.0);
+            double etai_over_etat = rec.isFrontFace ? 1.0 / ref_idx : ref_idx;
+
+            var unit_direction = rayIn.Direction.unit_vector();
+            var cos_theta = Math.Min(Vec3.dot(-unit_direction, rec.normal), 1.0);
+            var sin_theta = Math.Sqrt(1 - cos_theta * cos_theta);
+            if(etai_over_etat * sin_theta > 1)
+            {
+                var reflected = RayTracer.Reflect(unit_direction, rec.normal);
+                scattered = new Ray(rec.p, reflected);
+                return true;
+            }
+
+            var reflect_prob = schlick(cos_theta, etai_over_etat);
+            if (RayTracer.RandomDouble() < reflect_prob)
+            {
+                var reflected = RayTracer.Reflect(unit_direction, rec.normal);
+                scattered = new Ray(rec.p, reflected);
+                return true;
+            }
+
+            var refracted = RayTracer.Refract(unit_direction, rec.normal, etai_over_etat);
+            scattered = new Ray(rec.p, refracted);
+            return true;
+        }
+
+        double schlick(double cosine, double ref_idx)
+        {
+            var r0 = (1 - ref_idx) / (1 + ref_idx);
+            r0 = r0 * r0;
+            return r0 + (1 - r0) * Math.Pow(1 - cosine, 5);
+        }
+    }
+
 
     class Camera
     {
@@ -435,13 +480,10 @@ namespace OneWeekendRT
             get { return camera; }
         }
 
-        public double RandomDouble
+        public static double RandomDouble()
         {
-            get
-            {
-                Random rand = new Random();
-                return rand.NextDouble();
-            }
+            Random rand = new Random();
+            return rand.NextDouble();
         }
 
         public int SamplePerPixel
@@ -514,6 +556,14 @@ namespace OneWeekendRT
             return v - 2 * Vec3.dot(v, n) * n;
         }
 
+        public static Vec3 Refract(Vec3 uv, Vec3 n, double etai_over_etat)
+        {
+            var cos_theta = Vec3.dot(-uv, n);
+            var r_out_parallel = etai_over_etat * (uv + cos_theta * n);
+            var r_out_perp = -(Math.Sqrt(1 - r_out_parallel.length_squared()) * n);
+            return r_out_parallel + r_out_perp;
+        }
+
         public static int MaxRecursiveDepth
         {
             get { return 50; }
@@ -527,10 +577,11 @@ namespace OneWeekendRT
             RayTracer rt = new RayTracer(800, 600, 1.0);
             var bmp = new Bitmap(rt.Camera.OutputImageWidth, rt.Camera.OutputImageHeight);
             HittableList world = new HittableList();
-            world.Add(new Sphere(new Point3(0, 0, -1), 0.5, new Lambertian(new color(0.7, 0.3, 0.3))));
+            world.Add(new Sphere(new Point3(0, 0, -1), 0.5, new Lambertian(new color(0.1, 0.2, 0.5))));
             world.Add(new Sphere(new Point3(0, -100.5, -1), 100, new Lambertian(new color(0.8, 0.8, 0))));
             world.Add(new Sphere(new Point3(1, 0, -1), 0.5, new Metal(new color(0.8, 0.6, 0.2), 0)));
-            world.Add(new Sphere(new Point3(-1, 0, -1), 0.5, new Metal(new color(0.8, 0.8, 0.8), 0.6)));
+            //world.Add(new Sphere(new Point3(-1, 0, -1), 0.5, new Metal(new color(0.8, 0.8, 0.8), 0.6)));
+            world.Add(new Sphere(new Point3(-1, 0, -1), 0.5, new Dielectric(1.5)));
 
             for (int y = 0; y < rt.Camera.OutputImageHeight; ++y)
             {
@@ -540,8 +591,8 @@ namespace OneWeekendRT
                     color pixelColor = color.Zero;
                     for (int s = 0; s < rt.SamplePerPixel; ++s)
                     {
-                        var u = (double)(x + rt.RandomDouble) / (rt.Camera.OutputImageWidth - 1);
-                        var v = (double)(y + rt.RandomDouble) / (rt.Camera.OutputImageHeight - 1);
+                        var u = (double)(x + RayTracer.RandomDouble()) / (rt.Camera.OutputImageWidth - 1);
+                        var v = (double)(y + RayTracer.RandomDouble()) / (rt.Camera.OutputImageHeight - 1);
                         Ray ray = rt.Camera.GetRay(u, v);
                         pixelColor += rt.ComputeRayColor(ray, world, RayTracer.MaxRecursiveDepth);
                     }
